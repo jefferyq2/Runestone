@@ -533,8 +533,14 @@ open class TextView: UIScrollView {
             textInputView.highlightedRanges
         }
         set {
-            textInputView.highlightedRanges = newValue
-            highlightNavigationController.highlightedRanges = newValue
+
+            // it's our decision to make the Text Editor Performance when rendering the Finding Highlighting
+            // If the user search the simple char e.g. "a", the app is struggled to highlight with 2000 results.
+            // Just show top 200
+
+            let trimpValues = Array(newValue.prefix(200))
+            textInputView.highlightedRanges = trimpValues
+            highlightNavigationController.highlightedRanges = trimpValues
         }
     }
     /// Wheter the text view should loop when navigating through highlighted ranges using `selectPreviousHighlightedRange` or `selectNextHighlightedRange` on the text view.

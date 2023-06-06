@@ -1,6 +1,25 @@
 import UIKit
 
+fileprivate final class Debouncer {
+
+    private var currentWorkItem: DispatchWorkItem?
+
+    public init() {}
+
+    public func debounce(delay: DispatchTimeInterval, queue: DispatchQueue = .main, action: @escaping (() -> Void)) -> () -> Void {
+        return {  [weak self] in
+            guard let self = self else { return }
+            self.currentWorkItem?.cancel()
+            self.currentWorkItem = DispatchWorkItem { action() }
+            queue.asyncAfter(deadline: .now() + delay, execute: self.currentWorkItem!)
+        }
+    }
+}
+
 final class UITextSearchingHelper: NSObject {
+    //
+    private let debouncer = Debouncer()
+
     weak var textView: TextView?
 #if compiler(>=5.7)
     var isFindInteractionEnabled = false {
@@ -83,13 +102,27 @@ extension UITextSearchingHelper: UITextSearching {
     }
 
     func performTextSearch(queryString: String, options: UITextSearchOptions, resultAggregator: UITextSearchAggregator<AnyHashable?>) {
-        performTextSearch(for: queryString, options: options) { searchResults in
-            for searchResult in searchResults {
-                let textRange = IndexedRange(searchResult.range)
-                resultAggregator.foundRange(textRange, searchString: queryString, document: nil)
+        // Use debounder to prevent performing the search if the user types the first character, e.g "a"
+        // Make the app more responsive
+        let action = debouncer.debounce(delay: .milliseconds(250)) { [weak self] in
+            guard let strongSelf = self else { return }
+
+            // if it's empty, just done
+            if queryString.isEmpty {
+                resultAggregator.finishedSearching()
+                return
             }
-            resultAggregator.finishedSearching()
+
+            // Or search
+            strongSelf.performTextSearch(for: queryString, options: options) { searchResults in
+                for searchResult in searchResults {
+                    let textRange = IndexedRange(searchResult.range)
+                    resultAggregator.foundRange(textRange, searchString: queryString, document: nil)
+                }
+                resultAggregator.finishedSearching()
+            }
         }
+        action()
     }
 
     func decorate(foundTextRange: UITextRange, document: AnyHashable??, usingStyle style: UITextSearchFoundTextStyle) {
@@ -110,7 +143,7 @@ extension UITextSearchingHelper: UITextSearching {
         performTextSearch(for: queryString, options: options) { searchResults in
             let replacements = searchResults.map { BatchReplaceSet.Replacement(range: $0.range, text: replacementText) }
             let batchReplaceSet = BatchReplaceSet(replacements: replacements)
-            DispatchQueue.main.sync {
+            DispatchQueue.main.async {
                 self._textView.replaceText(in: batchReplaceSet)
             }
         }
@@ -164,7 +197,11 @@ private extension UITextSearchingHelper {
             }
             let query = SearchQuery(queryString: queryString, options: options)
             let searchResults = self._textView.search(for: query)
-            completion(searchResults)
+
+            DispatchQueue.main.async {
+                completion(searchResults)
+            }
+
         }
         queue.addOperation(operation)
     }
